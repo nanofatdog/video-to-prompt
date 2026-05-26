@@ -281,10 +281,20 @@ def call_vision_api(
 
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": content}],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful vision-language assistant. "
+                    "Answer directly with the final answer only. No <think> and no reasoning."
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
         "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": 0.9,
+        "stop": ["<|im_end|>", "<|im_start|>"],
     }
 
     if verbose:

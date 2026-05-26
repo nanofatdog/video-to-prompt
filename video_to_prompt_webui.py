@@ -46,53 +46,57 @@ PROMPT_MODES = {
     "🎨 Describe (image generation prompt)": {
         "key": "describe",
         "prompt": (
-            "You are analyzing frames extracted from a video. These {n} frames are uniformly "
-            "sampled from the entire video timeline.\n\n"
-            "Write a DETAILED visual description suitable for use as an AI image generation prompt. "
-            "Include: subject, setting, lighting, color palette, mood, composition, style, camera angle, "
-            "and any notable details visible across the frames. If the video shows action/motion, "
-            "describe the sequence and dynamics.\n\n"
-            "Output format: a single coherent paragraph in English, ready to copy into Stable Diffusion "
-            "or Midjourney. Be specific and vivid — avoid vague terms. Use photography/cinematography "
-            "terminology where appropriate."
+            "Write ONE detailed paragraph (8-12 sentences, ~150-250 words) describing these {n} video frames "
+            "as an AI image generation prompt.\n\n"
+            "Include: subject(s) and action, setting, lighting (source, direction, color temperature, shadows), "
+            "color palette, mood, composition, style, camera angle/lens feel, and any notable details visible across frames.\n"
+            "If the video shows motion, describe the sequence.\n\n"
+            "Stay grounded in visible details only. Use vivid photography/cinematography terminology. "
+            "No abstract interpretations.\n\n"
+            "No preface, no reasoning, no <think>. Output ONLY the prompt paragraph."
         ),
     },
     "📝 Summarize (brief description)": {
         "key": "summarize",
         "prompt": (
-            "These {n} frames are sampled from a video. Describe what happens in the video based on "
-            "these frames. What is the subject doing? Where are they? What is the overall "
-            "action/event taking place? Be concise but complete."
+            "These {n} frames are sampled from a video. Write ONE concise paragraph (4-6 sentences, ~80-120 words) "
+            "summarizing what happens: subject, action, setting, overall event.\n\n"
+            "Stay grounded in visible details. No speculation about what happens between frames.\n\n"
+            "No preface, no reasoning, no <think>. Output ONLY the summary paragraph."
         ),
     },
     "🏷️ Tags (comma-separated keywords)": {
         "key": "tag",
         "prompt": (
-            "Analyze these {n} video frames. Extract tags/keywords describing the content.\n"
-            "Output ONLY comma-separated tags in English, no other text. "
+            "Analyze these {n} video frames. Generate a clean list of comma-separated tags for AI image generation, "
+            "based ONLY on visual information. Limit to max 50 unique tags.\n\n"
             "Include: subjects, objects, actions, setting, style, lighting, mood, colors, "
-            "camera angle, time of day, quality descriptors.\n"
-            "Example: portrait, woman, outdoor, sunset, golden hour, bokeh, soft lighting, "
-            "photorealistic, 8k, shallow depth of field"
+            "camera angle, time of day, quality descriptors. "
+            "Strictly describe visual elements. No abstract concepts, marketing terms, or technical jargon.\n\n"
+            "No preface, no reasoning, no <think>. Output ONLY the comma-separated tags.\n"
+            "Example: portrait, woman, outdoor, sunset, golden hour, bokeh, soft lighting, photorealistic, 8k"
         ),
     },
     "🎌 Danbooru Tags": {
         "key": "booru",
         "prompt": (
-            "You are a Danbooru tagger. Analyze these {n} video frames and output ONLY "
-            "space-separated Danbooru-style tags. Include: character count, gender, hair color, "
-            "eye color, clothing, pose, expression, background, art style, quality tags.\n"
-            "Format: tag1 tag2 tag3 ... (no commas, no other text)"
+            "You are a Danbooru tagger. Analyze these {n} video frames. "
+            "Output ONLY space-separated Danbooru-style tags based on visible content.\n\n"
+            "Include: character count, gender, hair color, eye color, clothing, pose, expression, "
+            "background, art style, quality tags.\n"
+            "Format: tag1 tag2 tag3 ... (space-separated, no commas, no other text)\n\n"
+            "No preface, no reasoning, no <think>. Output ONLY the tags."
         ),
     },
     "🔞 NSFW Check (rating 1-10)": {
         "key": "nsfw_check",
         "prompt": (
-            "Analyze these {n} video frames. Rate the content on these scales (1-10):\n"
+            "Analyze these {n} video frames. Rate the content on these scales (1-10) "
+            "based ONLY on visible visual content:\n"
             "- Suggestive: (1=fully clothed, 10=explicit)\n"
             "- Violence: (1=none, 10=extreme)\n"
-            "- Overall NSFW: (1=completely safe, 10=explicit adult content)\n"
-            "Output only the three numbers like: 3,1,2"
+            "- Overall NSFW: (1=completely safe, 10=explicit adult content)\n\n"
+            "No preface, no reasoning, no <think>. Output only the three numbers like: 3,1,2"
         ),
     },
 }
@@ -100,30 +104,32 @@ PROMPT_MODES = {
 # ── Custom Prompt Examples ──────────────────────────────────────────
 EXAMPLE_PROMPTS = {
     "🎬 Movie Director Shot List": (
-        "You are a professional film director analyzing these {n} video frames. "
-        "Create a detailed shot list describing each frame as if you were directing a movie.\n\n"
-        "For each visible scene/shot include:\n"
-        "- Shot type (close-up, medium, wide, POV, aerial, etc.)\n"
+        "You are a professional film director. Analyze these {n} video frames.\n\n"
+        "Create a detailed shot list. For each visible scene/shot include:\n"
+        "- Shot type (close-up, medium, wide, POV, aerial)\n"
         "- Camera movement (static, pan, tilt, dolly, handheld)\n"
         "- Lighting setup (key light direction, fill, rim, natural/artificial)\n"
         "- Lens choice (wide angle, telephoto, anamorphic)\n"
         "- Composition notes (rule of thirds, leading lines, symmetry)\n"
         "- Color grading mood (warm, cool, desaturated, high contrast)\n\n"
-        "Format as a professional shot list. Be technical and precise."
+        "Stay grounded in visible details. Be technical and precise.\n\n"
+        "No preface, no reasoning, no <think>. Output ONLY the shot list."
     ),
     "📸 Photo/Art Style Analysis": (
-        "Analyze these {n} video frames as an art critic and professional photographer.\n\n"
+        "Analyze these {n} video frames as an art critic and professional photographer. "
+        "Write ONE paragraph (8-12 sentences, ~150-200 words).\n\n"
         "Describe:\n"
-        "- Photography/art style (cinematic, editorial, snapshot, fine art, vintage, etc.)\n"
-        "- Camera settings you would guess were used (aperture, shutter speed, ISO feel)\n"
+        "- Photography/art style (cinematic, editorial, snapshot, fine art, vintage)\n"
+        "- Estimated camera settings (aperture feel, shutter speed, ISO)\n"
         "- Depth of field and bokeh characteristics\n"
-        "- Texture and surface details visible\n"
-        "- Any post-processing effects (film grain, vignette, color grading)\n"
-        "- Comparable photographers or art movements this evokes\n\n"
-        "Write as a gallery exhibition description — elegant and insightful."
+        "- Texture and surface details\n"
+        "- Post-processing effects (film grain, vignette, color grading)\n"
+        "- Comparable photographers or art movements\n\n"
+        "Stay grounded in visible details. Elegant gallery-exhibition tone.\n\n"
+        "No preface, no reasoning, no <think>. Output ONLY the analysis paragraph."
     ),
     "🎨 Dominant Color Palette": (
-        "Analyze the color scheme across these {n} video frames.\n\n"
+        "Analyze the color scheme across these {n} video frames. "
         "Output EXACTLY in this format:\n"
         "1. Primary palette: list 5-7 hex color codes (#RRGGBB) with names\n"
         "2. Color harmony type: (monochromatic / complementary / analogous / triadic / split-complementary)\n"
@@ -131,29 +137,31 @@ EXAMPLE_PROMPTS = {
         "4. Brightness/Value: (low-key / balanced / high-key)\n"
         "5. Temperature: (cool / neutral / warm / mixed)\n"
         "6. One-line description of the overall color mood\n\n"
-        "Be precise with hex codes — estimate from what you see."
+        "Stay grounded in visible colors. Estimate hex codes from what you see.\n\n"
+        "No preface, no reasoning, no <think>. Output ONLY the format above."
     ),
     "🔍 Object & Brand Detection": (
-        "You are a forensic image analyst. Examine these {n} video frames and list:\n\n"
+        "You are a forensic image analyst. Examine these {n} video frames. "
+        "List ONLY what is visually confirmed:\n\n"
         "1. All visible OBJECTS with counts (e.g., '3 chairs, 1 red coffee mug')\n"
         "2. Any recognizable BRANDS or logos (clothing, electronics, food, vehicles)\n"
-        "3. TECHNOLOGY devices (phones, laptops, monitors — guess models if possible)\n"
+        "3. TECHNOLOGY devices (phones, laptops, monitors — estimate models if possible)\n"
         "4. VEHICLES (car make/model, license plates if visible)\n"
         "5. CLOTHING items with estimated colors and styles\n"
         "6. TEXT/words visible anywhere in the frames\n"
         "7. LOCATION clues (indoor/outdoor, city/rural, any landmarks)\n\n"
-        "Format as a structured checklist. Say 'none detected' if a category is empty."
+        "Say 'none detected' if a category is empty. Stay grounded in visible evidence.\n\n"
+        "No preface, no reasoning, no <think>. Output ONLY the checklist."
     ),
     "📝 Social Media Caption": (
-        "Create 3 social media caption options for this video content, based on {n} frames.\n\n"
-        "Each caption should include:\n"
-        "- A catchy headline/hook\n"
-        "- 2-3 relevant hashtags\n"
-        "- Target platform noted (Instagram / TikTok / YouTube / Twitter)\n\n"
+        "Create 3 social media caption options for this video content, based on {n} frames. "
+        "Stay grounded in visible content.\n\n"
+        "Each caption: catchy hook + 2-3 relevant hashtags + target platform noted.\n\n"
         "Caption 1 — Professional/LinkedIn style\n"
         "Caption 2 — Casual/Instagram style with emoji\n"
         "Caption 3 — Short/TikTok viral style\n\n"
-        "Make them feel authentic and platform-appropriate."
+        "Make them authentic and platform-appropriate.\n\n"
+        "No preface, no reasoning, no <think>. Output ONLY the 3 captions."
     ),
 }
 
@@ -473,10 +481,20 @@ def process_video(
 
     payload = {
         "model": model_name,
-        "messages": [{"role": "user", "content": content}],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful vision-language assistant. "
+                    "Answer directly with the final answer only. No <think> and no reasoning."
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
         "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": 0.9,
+        "stop": ["<|im_end|>", "<|im_start|>"],
     }
 
     api_start = time.time()
