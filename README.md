@@ -4,7 +4,7 @@
 
 A Gradio web application that extracts frames from video, sends them to a multimodal vision LLM, and generates detailed descriptions, tags, or summaries — perfect for prompt engineering, content analysis, and AI workflow automation.
 
-![screenshot](https://img.shields.io/badge/version-1.0.0-orange) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.10%2B-green)
+![screenshot](https://img.shields.io/badge/version-1.1.0-orange) ![license](https://img.shields.io/badge/license-MIT-blue) ![python](https://img.shields.io/badge/python-3.10%2B-green)
 
 ---
 
@@ -12,8 +12,15 @@ A Gradio web application that extracts frames from video, sends them to a multim
 
 - 🎥 **Upload any video** — MP4, AVI, MOV, MKV, WebM, and more
 - 🧠 **5 prompt modes** — Describe, Summarize, Tags, Danbooru, NSFW Check
+- 💡 **5 example prompts** — Shot List, Art Analysis, Color Palette, Object Detection, Social Caption
+- 🌡️ **Temperature presets** — Creative (0.9) / Balanced (0.6) / Precise (0.3) one-click
+- 📦 **Download frames** — Export extracted frames as ZIP
+- 📜 **Output history** — Last 5 results stored for easy recall
+- 🔄 **Model discovery** — Auto-detect available vision models from API
+- 👁️ **Frame timestamps** — Each preview thumbnail shows exact second
 - ⚙️ **Configurable API** — Point to any llama.cpp vision endpoint
 - 🖼️ **Frame preview** — See extracted frames before processing
+- 🔑 **API key support** — Optional Bearer token auth
 - 📊 **Real-time progress** — Track every step from extraction to generation
 - 💾 **Save & Copy** — Export results as .txt or copy to clipboard
 - 🎨 **Beautiful UI** — Clean, dark-themed Gradio interface

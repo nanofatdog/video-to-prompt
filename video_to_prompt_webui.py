@@ -11,6 +11,9 @@ Features:
 - Frame sampling control
 - Real-time progress bar
 - Live preview of extracted frames
+- Temperature presets (Creative / Balanced / Precise)
+- Download extracted frames as ZIP
+- Output history (last 5 results)
 - Copy to clipboard
 - Save to file
 """
@@ -19,10 +22,13 @@ import base64
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -34,13 +40,14 @@ import requests
 from PIL import Image
 
 # ── Constants ───────────────────────────────────────────────────────
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DEFAULT_API_URL = "http://localhost:8080/v1/chat/completions"
 DEFAULT_MODEL = "llmfan46_Qwen3.6-35B-A3B-uncensored-heretic-Q6_K.gguf"
 DEFAULT_FRAME_COUNT = 16
 DEFAULT_MAX_SIZE = 1280
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_MAX_TOKENS_LIMIT = 8192  # Max slider value for llama.cpp
+MAX_HISTORY = 5
 
 PROMPT_MODES = {
     "🎨 Describe (image generation prompt)": {
@@ -225,7 +232,6 @@ def extract_frames(video_path: str, frame_count: int = 16, max_size: int = 1280)
     
     # Calculate timestamps for each frame
     if duration > 0 and frames:
-        # fps filter distributes frames evenly, but we calculate based on uniform sampling
         timestamps = [duration * i / len(frames) for i in range(len(frames))]
     else:
         timestamps = [float(i) for i in range(len(frames))]
@@ -289,7 +295,6 @@ def create_frame_strip(
     
     try:
         from PIL import ImageDraw, ImageFont
-        # Try to get a small font
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
         except (OSError, IOError):
@@ -299,33 +304,51 @@ def create_frame_strip(
     
     for i, thumb in enumerate(thumbs):
         r, c = i // cols, i % cols
-        # Top area: thumb
         x = c * thumb_size + (thumb_size - thumb.width) // 2
         y = r * (thumb_size + label_height) + (thumb_size - thumb.height) // 2
         strip.paste(thumb, (x, y))
         
-        # Bottom area: timestamp label
         if timestamps and i < len(timestamps) and font:
             ts = timestamps[i]
             label_x = c * thumb_size + 4
             label_y = r * (thumb_size + label_height) + thumb_size + 3
             
-            # Format timestamp: mm:ss or h:mm:ss
             if ts >= 3600:
                 label = f"{int(ts//3600)}:{int((ts%3600)//60):02d}:{ts%60:04.1f}"
             else:
                 label = f"{int(ts//60):02d}:{ts%60:04.1f}"
             
             draw = ImageDraw.Draw(strip)
-            # Black background bar
             draw.rectangle(
                 [c * thumb_size, label_y - 3, (c + 1) * thumb_size, label_y + label_height],
                 fill=(0, 0, 0),
             )
-            # Orange text
             draw.text((label_x, label_y), label, fill=(255, 200, 50), font=font)
     
     return strip
+
+
+def save_frames_to_dir(frames: list[Image.Image], timestamps: list[float], quality: int = 85) -> str:
+    """Save extracted frames as JPEG files to a temp directory. Returns the dir path."""
+    temp_dir = tempfile.mkdtemp(prefix="video_frames_")
+    for i, (frame, ts) in enumerate(zip(frames, timestamps)):
+        ts_str = f"{int(ts//1):04d}"
+        filepath = os.path.join(temp_dir, f"frame_{i:03d}_{ts_str}s.jpg")
+        frame.convert("RGB").save(filepath, format="JPEG", quality=quality, optimize=True)
+    return temp_dir
+
+
+def make_frames_zip(temp_dir: str) -> str:
+    """Create a ZIP file from a directory of frames. Returns path to ZIP."""
+    if not temp_dir or not os.path.isdir(temp_dir):
+        return None
+    zip_path = temp_dir + ".zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(os.listdir(temp_dir)):
+            fpath = os.path.join(temp_dir, fname)
+            if os.path.isfile(fpath):
+                zf.write(fpath, fname)
+    return zip_path
 
 
 # ── API ─────────────────────────────────────────────────────────────
@@ -342,15 +365,12 @@ REASONING_MARKERS = [
 
 def clean_output(raw: str) -> str:
     """Clean reasoning artifacts from thinking model output."""
-    # Pattern 1: " response" marker (Qwen thinking format)
-    if " response" in raw:
+    if "<｜end▁of▁thinking｜>" in raw:
         raw = raw.split(" response")[-1].strip()
 
-    # Pattern 2: Remove <｜end▁of▁thinking｜> at start
     if raw.startswith("response"):
         raw = raw[len("response"):].strip()
 
-    # Pattern 3: Remove lines that look like reasoning
     lines = raw.strip().split("\n")
     cleaned = []
     in_reasoning = True
@@ -367,7 +387,6 @@ def clean_output(raw: str) -> str:
 
     result = "\n".join(cleaned).strip()
 
-    # If we accidentally stripped everything, return original
     if len(result) < 10 and len(raw) > 50:
         return raw.strip()
 
@@ -391,17 +410,18 @@ def process_video(
 ):
     """Main pipeline: extract frames → call API → return results."""
     if video_file is None:
-        yield None, "❌ Please upload a video file", "", "", ""
+        yield None, "❌ Please upload a video file", "", "", "", None
         return
 
     video_path = video_file.name if hasattr(video_file, 'name') else str(video_file)
     start_time = time.time()
+    frames_temp_dir = None
 
     # ── Step 1: Video Info ──
     progress(0.05, desc="🔍 Reading video metadata...")
     info = get_video_info(video_path)
     if not info:
-        yield None, "❌ Cannot read video file. Check format.", "", "", ""
+        yield None, "❌ Cannot read video file. Check format.", "", "", "", None
         return
 
     info_text = (
@@ -414,26 +434,28 @@ def process_video(
 
     # ── Step 2: Extract Frames ──
     progress(0.15, desc="🎞️ Extracting frames...")
-    yield None, info_text + "\n\n🔄 Extracting frames...", "", "", ""
+    yield None, info_text + "\n\n🔄 Extracting frames...", "", "", "", None
 
     try:
         frames, timestamps = extract_frames(video_path, frame_count, max_size)
     except subprocess.CalledProcessError as e:
-        yield None, f"❌ ffmpeg error: {e.stderr.decode()[:500] if e.stderr else str(e)}", "", "", ""
+        yield None, f"❌ ffmpeg error: {e.stderr.decode()[:500] if e.stderr else str(e)}", "", "", "", None
         return
     except Exception as e:
-        yield None, f"❌ Frame extraction failed: {e}", "", "", ""
+        yield None, f"❌ Frame extraction failed: {e}", "", "", "", None
         return
 
     if not frames:
-        yield None, "❌ No frames extracted. Try a different video.", "", "", ""
+        yield None, "❌ No frames extracted. Try a different video.", "", "", "", None
         return
+
+    # Save frames to temp dir for download
+    frames_temp_dir = save_frames_to_dir(frames, timestamps)
 
     # ── Step 3: Preview ──
     progress(0.30, desc="🖼️ Generating preview...")
     strip = create_frame_strip(frames, timestamps)
     
-    # Build frame info with timestamps
     if timestamps and len(timestamps) > 1:
         ts_lines = ", ".join(f"{ts:.1f}s" for ts in timestamps[:5])
         if len(timestamps) > 5:
@@ -444,7 +466,7 @@ def process_video(
         )
     else:
         frame_info = f"📸 Extracted **{len(frames)}** frames (requested {frame_count})"
-    yield strip, info_text + "\n\n" + frame_info, "", "", ""
+    yield strip, info_text + "\n\n" + frame_info, "", "", "", frames_temp_dir
 
     # ── Step 4: Build Prompt ──
     progress(0.35, desc="📝 Building prompt...")
@@ -453,20 +475,27 @@ def process_video(
         display_mode = "Custom"
     else:
         for mode_name, mode_data in PROMPT_MODES.items():
-            if mode_data["key"] == mode:
+            if mode_name == mode:
                 prompt = mode_data["prompt"].format(n=len(frames))
                 display_mode = mode_name
                 break
         else:
-            prompt = PROMPT_MODES[list(PROMPT_MODES.keys())[0]]["prompt"].format(n=len(frames))
-            display_mode = "Describe"
+            # mode might be the key (e.g., "nsfw_check") — try matching by key
+            for mode_name, mode_data in PROMPT_MODES.items():
+                if mode_data["key"] == mode:
+                    prompt = mode_data["prompt"].format(n=len(frames))
+                    display_mode = mode_name
+                    break
+            else:
+                prompt = PROMPT_MODES[list(PROMPT_MODES.keys())[0]]["prompt"].format(n=len(frames))
+                display_mode = "Describe"
 
     yield strip, (
         f"{info_text}\n\n{frame_info}"
         f"\n\n📤 **Sending to API** (`{model_name[:30]}...`)\n"
         f"🎯 **Mode:** {display_mode}\n"
         f"🖼️ **Frames:** {len(frames)}"
-    ), "", "", ""
+    ), "", "", "", frames_temp_dir
 
     # ── Step 5: Call API ──
     progress(0.40, desc="🚀 Calling vision API...")
@@ -499,23 +528,26 @@ def process_video(
 
     api_start = time.time()
     try:
-        # Build headers with optional auth
         headers = {}
         if api_key and api_key.strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
         
-        resp = requests.post(api_url.rstrip("/") + "/v1/chat/completions" if not api_url.endswith("/v1/chat/completions") else api_url,
-                           json=payload, headers=headers, timeout=300)
+        # Normalize URL: ensure it has /v1/chat/completions
+        url = api_url.rstrip("/")
+        if not url.endswith("/v1/chat/completions"):
+            url = url + "/v1/chat/completions"
+        
+        resp = requests.post(url, json=payload, headers=headers, timeout=300)
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.ConnectionError:
-        yield strip, f"❌ Cannot connect to API: `{api_url}`\n\nIs the server running?", "", "", ""
+        yield strip, f"❌ Cannot connect to API: `{api_url}`\n\nIs the server running?", "", "", "", frames_temp_dir
         return
     except requests.exceptions.Timeout:
-        yield strip, "❌ API request timed out (300s). Try fewer frames or smaller max_size.", "", "", ""
+        yield strip, "❌ API request timed out (300s). Try fewer frames or smaller max_size.", "", "", "", frames_temp_dir
         return
     except Exception as e:
-        yield strip, f"❌ API error: {e}", "", "", ""
+        yield strip, f"❌ API error: {e}", "", "", "", frames_temp_dir
         return
 
     api_elapsed = time.time() - api_start
@@ -540,23 +572,19 @@ def process_video(
 
     # ── Step 8: Generate filenames ──
     video_name = Path(video_path).stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    default_filename = f"{video_name}_{mode}_{timestamp}.txt"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_filename = f"{video_name}_{mode}_{ts}.txt"
 
-    yield strip, stats, cleaned, cleaned, default_filename
+    yield strip, stats, cleaned, cleaned, default_filename, frames_temp_dir
 
 
 # ── Model Fetch ─────────────────────────────────────────────────────
 def fetch_models(api_url: str, api_key: str = "") -> list[tuple[str, str]]:
-    """
-    Fetch available models from llama.cpp API.
-    Returns list of (display_name, model_id) tuples.
-    """
+    """Fetch available models from llama.cpp API. Returns list of (display_name, model_id)."""
     if not api_url or not api_url.strip():
         return [("⚠️ Enter API URL first", "")]
     
     base_url = api_url.strip().rstrip("/")
-    # Remove /v1/chat/completions suffix to get base URL
     for suffix in ["/v1/chat/completions", "/v1", "/chat/completions"]:
         if base_url.endswith(suffix):
             base_url = base_url[: -len(suffix)]
@@ -582,29 +610,23 @@ def fetch_models(api_url: str, api_key: str = "") -> list[tuple[str, str]]:
     if not models:
         return [("⚠️ No models found", "")]
     
-    # Merge data from both arrays if API returns both
-    # 'models' array has capabilities, 'data' array has id + meta (size)
     models_arr = data.get("models", [])
     data_arr = data.get("data", [])
     
-    # Build lookup: name→capabilities from models array, id→meta from data array
     caps_map = {}
     for m in models_arr:
         model_id = m.get("name", m.get("id", ""))
         caps_map[model_id] = m.get("capabilities", [])
     
-    # Prefer data array for structured info, merge capabilities
     if data_arr:
         models = data_arr
     else:
-        models = models_arr
+        models = data_arr or models_arr
     
-    # Build display list with details
     result = []
     for m in models:
         model_id = m.get("id", m.get("name", ""))
         
-        # Get capabilities (from models array)
         caps = caps_map.get(model_id, m.get("capabilities", []))
         caps_str = ""
         if caps:
@@ -615,7 +637,6 @@ def fetch_models(api_url: str, api_key: str = "") -> list[tuple[str, str]]:
                 cap_icons.append("💬")
             caps_str = " " + "".join(cap_icons)
         
-        # Size info
         meta = m.get("meta", {})
         size_gb = meta.get("size", 0) / (1024**3)
         size_str = f" ({size_gb:.1f}GB)" if size_gb > 0 else ""
@@ -645,6 +666,7 @@ def build_ui():
         -webkit-text-fill-color: transparent; 
         font-weight: 800; 
     }
+    .preset-active { border: 2px solid #ff6b35 !important; }
     footer { display: none !important; }
     """
 
@@ -654,6 +676,10 @@ def build_ui():
         title="Video-to-Prompt | AI Video Analyzer",
         analytics_enabled=False,
     ) as demo:
+        # ── State ──
+        history_state = gr.State([])  # list of dicts: {ts, mode, text}
+        frames_dir_state = gr.State(None)  # path to temp frames directory
+        
         gr.HTML("""
         <div style="text-align: center; margin-bottom: 1rem;">
             <h1 class="title-gradient" style="font-size: 2.5rem; margin: 0;">🎬 Video → Prompt</h1>
@@ -753,10 +779,18 @@ def build_ui():
                         label="Max output tokens",
                         info=f"Up to {DEFAULT_MAX_TOKENS_LIMIT} tokens",
                     )
+                    
+                    # ── Temperature with presets ──
                     temperature = gr.Slider(
                         minimum=0.1, maximum=1.5, value=0.6, step=0.05,
                         label="Temperature",
+                        info="Controls creativity/randomness",
                     )
+                    with gr.Row():
+                        temp_creative = gr.Button("🎨 Creative", size="sm", scale=1)
+                        temp_balanced = gr.Button("⚖️ Balanced", size="sm", scale=1)
+                        temp_precise = gr.Button("🎯 Precise", size="sm", scale=1)
+                    
                     quality = gr.Slider(
                         minimum=30, maximum=100, value=80, step=5,
                         label="JPEG quality",
@@ -804,9 +838,37 @@ def build_ui():
                     save_btn = gr.Button("💾 Save", scale=1, variant="secondary")
                     copy_btn = gr.Button("📋 Copy", scale=1, variant="secondary")
 
+                # ── Action row: download frames + history ──
+                with gr.Row():
+                    download_frames_btn = gr.Button("📦 Download Frames", scale=1, variant="secondary")
+                    download_output = gr.File(label="", visible=False)
+                    download_status = gr.Markdown("", scale=2)
+                
                 save_status = gr.Markdown("")
 
+                # ── Output History ──
+                with gr.Accordion("📜 Output History (last 5)", open=False):
+                    history_dropdown = gr.Dropdown(
+                        choices=[],
+                        value=None,
+                        label="Select a previous result",
+                        interactive=True,
+                    )
+
         # ── Event Bindings ──
+
+        # Temperature presets
+        def set_temp_creative():
+            return 0.9
+        def set_temp_balanced():
+            return 0.6
+        def set_temp_precise():
+            return 0.3
+        
+        temp_creative.click(fn=set_temp_creative, outputs=[temperature])
+        temp_balanced.click(fn=set_temp_balanced, outputs=[temperature])
+        temp_precise.click(fn=set_temp_precise, outputs=[temperature])
+
         def on_save(text, filename):
             if not text or not text.strip():
                 return "❌ Nothing to save"
@@ -816,6 +878,16 @@ def build_ui():
 
         def on_copy(text):
             return text  # gr.Textbox handles clipboard
+
+        def on_download_frames(frames_dir):
+            """Create ZIP from frames directory and return for download."""
+            if not frames_dir or not os.path.isdir(frames_dir):
+                return None, "⚠️ No frames available. Generate a prompt first."
+            try:
+                zip_path = make_frames_zip(frames_dir)
+                return zip_path, f"✅ {len(os.listdir(frames_dir))} frames ready for download"
+            except Exception as e:
+                return None, f"❌ Failed to create ZIP: {e}"
 
         def on_refresh_models(api_url_val, api_key_val):
             """Refresh model list from API."""
@@ -829,12 +901,10 @@ def build_ui():
             if not choices:
                 return gr.update(choices=[], value=""), "⚠️ No models found"
             
-            # Check for errors
             first = choices[0]
             if first.startswith("❌") or first.startswith("⚠️"):
                 return gr.update(choices=choices, value=""), first
             
-            # Count multimodal models
             multimodal_count = sum(1 for c in choices if "👁️" in c)
             status = f"✅ **{len(choices)}** models found"
             if multimodal_count > 0:
@@ -842,7 +912,6 @@ def build_ui():
             else:
                 status += " (no vision models detected ⚠️)"
             
-            # Default: prefer first multimodal model, else first model
             default_val = values[0]
             for c, v in zip(choices, values):
                 if "👁️" in c:
@@ -854,6 +923,87 @@ def build_ui():
                 status,
             )
 
+        # ── History management ──
+        def add_to_history(history, mode_display, output_text_val):
+            """Add a result to history (max 5)."""
+            if not output_text_val or not output_text_val.strip():
+                return history, gr.update(choices=[])
+            
+            entry = {
+                "ts": datetime.now().strftime("%H:%M:%S"),
+                "mode": mode_display,
+                "text": output_text_val,
+            }
+            new_history = (history or []) + [entry]
+            # Keep only last 5
+            if len(new_history) > MAX_HISTORY:
+                new_history = new_history[-MAX_HISTORY:]
+            
+            choices = [
+                f"[{h['ts']}] {h['mode']}: {h['text'][:60]}..."
+                for h in new_history
+            ]
+            return new_history, gr.update(choices=choices, value=choices[-1] if choices else None)
+
+        def on_history_select(history, selected):
+            """Display selected history entry."""
+            if not history or not selected:
+                return ""
+            for h in history:
+                label = f"[{h['ts']}] {h['mode']}: {h['text'][:60]}..."
+                if label == selected:
+                    return h["text"]
+            return ""
+
+        # ── Wire up process_video with history ──
+        def process_and_log(
+            video, url, key, model, mode_sel, custom_p, frames_n,
+            max_sz, max_tok, temp, qual, history,
+            progress=gr.Progress(),
+        ):
+            """Wrapper: run process_video and add to history on final yield."""
+            last_strip = None
+            last_status = None
+            last_output = None
+            last_filename = None
+            last_frames_dir = None
+            display_mode = mode_sel
+            
+            for output in process_video(
+                video, url, key, model, mode_sel, custom_p,
+                frames_n, max_sz, max_tok, temp, qual, progress,
+            ):
+                if len(output) == 6:
+                    strip, status, out_txt1, out_txt2, filename, frames_dir = output
+                elif len(output) == 5:
+                    # Backward compat: older process_video with 5 outputs
+                    strip, status, out_txt1, out_txt2, filename = output
+                    frames_dir = None
+                else:
+                    continue
+                
+                last_strip = strip
+                last_status = status
+                last_output = out_txt2  # cleaned output
+                last_filename = filename
+                last_frames_dir = frames_dir
+                yield strip, status, out_txt1, out_txt2, filename, frames_dir
+            
+            # Add to history if we got a real output
+            if last_output and last_output.strip():
+                # Determine display mode text
+                if custom_p and custom_p.strip():
+                    mode_text = "Custom"
+                else:
+                    mode_text = mode_sel
+                
+                new_history, history_update = add_to_history(history, mode_text, last_output)
+                # Note: we can't yield additional outputs here, so we update history_state
+                # through the last yield already done. We need a different approach...
+                # Let's use the history dropdown update as a side effect.
+                # Actually, let's have the history updated in a separate callback chain.
+
+        # ── Click handlers ──
         # Auto-load models on page load
         demo.load(
             fn=on_refresh_models,
@@ -861,17 +1011,16 @@ def build_ui():
             outputs=[model_name, model_status],
         )
 
-        # Refresh button
         refresh_btn.click(
             fn=on_refresh_models,
             inputs=[api_url, api_key],
             outputs=[model_name, model_status],
         )
 
-        # Example prompt selector → fill custom_prompt textbox
+        # Example prompt selector → fill custom_prompt
         def on_example_select(selected):
             if not selected or selected.startswith("✨"):
-                return ""  # Reset if "Select..." is chosen
+                return ""
             return EXAMPLE_PROMPTS.get(selected, "")
 
         example_prompts.change(
@@ -880,13 +1029,60 @@ def build_ui():
             outputs=[custom_prompt],
         )
 
-        process_btn.click(
+        # Process video
+        process_event = process_btn.click(
             fn=process_video,
             inputs=[
                 video_input, api_url, api_key, model_name, mode, custom_prompt,
                 frame_count, max_size, max_tokens, temperature, quality,
             ],
-            outputs=[frame_preview, status_output, output_text, output_text, output_filename],
+            outputs=[
+                frame_preview, status_output, output_text, output_text,
+                output_filename, frames_dir_state,
+            ],
+        )
+
+        # After process completes, update history
+        def update_history_after(history, mode_sel, custom_p, output_val):
+            """Update history after process completes."""
+            if not output_val or not output_val.strip():
+                return history, gr.update()
+            
+            mode_text = "Custom" if (custom_p and custom_p.strip()) else mode_sel
+            
+            entry = {
+                "ts": datetime.now().strftime("%H:%M:%S"),
+                "mode": mode_text,
+                "text": output_val,
+            }
+            new_history = (history or []) + [entry]
+            if len(new_history) > MAX_HISTORY:
+                new_history = new_history[-MAX_HISTORY:]
+            
+            choices = [
+                f"[{h['ts']}] {h['mode']}: {h['text'][:60]}..."
+                for h in new_history
+            ]
+            return new_history, gr.update(choices=choices, value=choices[-1] if choices else None)
+
+        process_event.then(
+            fn=update_history_after,
+            inputs=[history_state, mode, custom_prompt, output_text],
+            outputs=[history_state, history_dropdown],
+        )
+
+        # Download frames
+        download_frames_btn.click(
+            fn=on_download_frames,
+            inputs=[frames_dir_state],
+            outputs=[download_output, download_status],
+        )
+
+        # History selection
+        history_dropdown.change(
+            fn=on_history_select,
+            inputs=[history_state, history_dropdown],
+            outputs=[output_text],
         )
 
         save_btn.click(
