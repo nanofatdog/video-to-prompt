@@ -400,6 +400,83 @@ def process_video(
     yield strip, stats, cleaned, cleaned, default_filename
 
 
+# ── Model Fetch ─────────────────────────────────────────────────────
+def fetch_models(api_url: str) -> list[tuple[str, str]]:
+    """
+    Fetch available models from llama.cpp API.
+    Returns list of (display_name, model_id) tuples.
+    """
+    if not api_url or not api_url.strip():
+        return [("⚠️ Enter API URL first", "")]
+    
+    base_url = api_url.strip().rstrip("/")
+    # Remove /v1/chat/completions suffix to get base URL
+    for suffix in ["/v1/chat/completions", "/v1", "/chat/completions"]:
+        if base_url.endswith(suffix):
+            base_url = base_url[: -len(suffix)]
+            break
+    
+    models_url = f"{base_url}/v1/models"
+    
+    try:
+        resp = requests.get(models_url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.ConnectionError:
+        return [(f"❌ Cannot connect to {base_url}", "")]
+    except requests.exceptions.Timeout:
+        return [("❌ Connection timed out", "")]
+    except Exception as e:
+        return [(f"❌ Error: {str(e)[:80]}", "")]
+    
+    models = data.get("data", data.get("models", []))
+    if not models:
+        return [("⚠️ No models found", "")]
+    
+    # Merge data from both arrays if API returns both
+    # 'models' array has capabilities, 'data' array has id + meta (size)
+    models_arr = data.get("models", [])
+    data_arr = data.get("data", [])
+    
+    # Build lookup: name→capabilities from models array, id→meta from data array
+    caps_map = {}
+    for m in models_arr:
+        model_id = m.get("name", m.get("id", ""))
+        caps_map[model_id] = m.get("capabilities", [])
+    
+    # Prefer data array for structured info, merge capabilities
+    if data_arr:
+        models = data_arr
+    else:
+        models = models_arr
+    
+    # Build display list with details
+    result = []
+    for m in models:
+        model_id = m.get("id", m.get("name", ""))
+        
+        # Get capabilities (from models array)
+        caps = caps_map.get(model_id, m.get("capabilities", []))
+        caps_str = ""
+        if caps:
+            cap_icons = []
+            if "multimodal" in caps or "vision" in caps:
+                cap_icons.append("👁️")
+            if "completion" in caps:
+                cap_icons.append("💬")
+            caps_str = " " + "".join(cap_icons)
+        
+        # Size info
+        meta = m.get("meta", {})
+        size_gb = meta.get("size", 0) / (1024**3)
+        size_str = f" ({size_gb:.1f}GB)" if size_gb > 0 else ""
+        
+        display = f"{model_id}{caps_str}{size_str}"
+        result.append((display, model_id))
+    
+    return result if result else [(f"⚠️ No models found", "")]
+
+
 # ── UI ──────────────────────────────────────────────────────────────
 def build_ui():
     theme = gr.themes.Soft(
@@ -449,15 +526,29 @@ def build_ui():
 
                 # ── API Settings ──
                 gr.Markdown("### ⚙️ API Settings")
-                api_url = gr.Textbox(
-                    label="API Endpoint",
-                    value=DEFAULT_API_URL,
-                    placeholder="http://192.168.3.177:8080/v1/chat/completions",
-                )
-                model_name = gr.Textbox(
+                with gr.Row():
+                    api_url = gr.Textbox(
+                        label="API Endpoint",
+                        value=DEFAULT_API_URL,
+                        placeholder="http://192.168.3.177:8080/v1/chat/completions",
+                        scale=4,
+                    )
+                    refresh_btn = gr.Button(
+                        "🔄 Check Models",
+                        variant="secondary",
+                        scale=1,
+                        size="sm",
+                    )
+                
+                model_name = gr.Dropdown(
                     label="Model Name",
+                    choices=[],
                     value=DEFAULT_MODEL,
+                    allow_custom_value=True,
+                    interactive=True,
+                    info="Click 🔄 Check Models to fetch available models, or type manually",
                 )
+                model_status = gr.Markdown("")
 
                 # ── Mode ──
                 gr.Markdown("### 🎯 Prompt Mode")
@@ -551,6 +642,57 @@ def build_ui():
 
         def on_copy(text):
             return text  # gr.Textbox handles clipboard
+
+        def on_refresh_models(api_url_val):
+            """Refresh model list from API."""
+            if not api_url_val or not api_url_val.strip():
+                return gr.update(choices=[], value=""), "⚠️ Enter API URL first"
+            
+            models = fetch_models(api_url_val)
+            choices = [display for display, _ in models]
+            values = [model_id for _, model_id in models]
+            
+            if not choices:
+                return gr.update(choices=[], value=""), "⚠️ No models found"
+            
+            # Check for errors
+            first = choices[0]
+            if first.startswith("❌") or first.startswith("⚠️"):
+                return gr.update(choices=choices, value=""), first
+            
+            # Count multimodal models
+            multimodal_count = sum(1 for c in choices if "👁️" in c)
+            status = f"✅ **{len(choices)}** models found"
+            if multimodal_count > 0:
+                status += f" — **{multimodal_count}** with vision 👁️"
+            else:
+                status += " (no vision models detected ⚠️)"
+            
+            # Default: prefer first multimodal model, else first model
+            default_val = values[0]
+            for c, v in zip(choices, values):
+                if "👁️" in c:
+                    default_val = v
+                    break
+            
+            return (
+                gr.update(choices=choices, value=default_val),
+                status,
+            )
+
+        # Auto-load models on page load
+        demo.load(
+            fn=on_refresh_models,
+            inputs=[api_url],
+            outputs=[model_name, model_status],
+        )
+
+        # Refresh button
+        refresh_btn.click(
+            fn=on_refresh_models,
+            inputs=[api_url],
+            outputs=[model_name, model_status],
+        )
 
         process_btn.click(
             fn=process_video,
