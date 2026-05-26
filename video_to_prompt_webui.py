@@ -96,6 +96,66 @@ PROMPT_MODES = {
     },
 }
 
+# ── Custom Prompt Examples ──────────────────────────────────────────
+EXAMPLE_PROMPTS = {
+    "🎬 Movie Director Shot List": (
+        "You are a professional film director analyzing these {n} video frames. "
+        "Create a detailed shot list describing each frame as if you were directing a movie.\n\n"
+        "For each visible scene/shot include:\n"
+        "- Shot type (close-up, medium, wide, POV, aerial, etc.)\n"
+        "- Camera movement (static, pan, tilt, dolly, handheld)\n"
+        "- Lighting setup (key light direction, fill, rim, natural/artificial)\n"
+        "- Lens choice (wide angle, telephoto, anamorphic)\n"
+        "- Composition notes (rule of thirds, leading lines, symmetry)\n"
+        "- Color grading mood (warm, cool, desaturated, high contrast)\n\n"
+        "Format as a professional shot list. Be technical and precise."
+    ),
+    "📸 Photo/Art Style Analysis": (
+        "Analyze these {n} video frames as an art critic and professional photographer.\n\n"
+        "Describe:\n"
+        "- Photography/art style (cinematic, editorial, snapshot, fine art, vintage, etc.)\n"
+        "- Camera settings you would guess were used (aperture, shutter speed, ISO feel)\n"
+        "- Depth of field and bokeh characteristics\n"
+        "- Texture and surface details visible\n"
+        "- Any post-processing effects (film grain, vignette, color grading)\n"
+        "- Comparable photographers or art movements this evokes\n\n"
+        "Write as a gallery exhibition description — elegant and insightful."
+    ),
+    "🎨 Dominant Color Palette": (
+        "Analyze the color scheme across these {n} video frames.\n\n"
+        "Output EXACTLY in this format:\n"
+        "1. Primary palette: list 5-7 hex color codes (#RRGGBB) with names\n"
+        "2. Color harmony type: (monochromatic / complementary / analogous / triadic / split-complementary)\n"
+        "3. Saturation level: (muted / natural / vibrant / hyper-saturated)\n"
+        "4. Brightness/Value: (low-key / balanced / high-key)\n"
+        "5. Temperature: (cool / neutral / warm / mixed)\n"
+        "6. One-line description of the overall color mood\n\n"
+        "Be precise with hex codes — estimate from what you see."
+    ),
+    "🔍 Object & Brand Detection": (
+        "You are a forensic image analyst. Examine these {n} video frames and list:\n\n"
+        "1. All visible OBJECTS with counts (e.g., '3 chairs, 1 red coffee mug')\n"
+        "2. Any recognizable BRANDS or logos (clothing, electronics, food, vehicles)\n"
+        "3. TECHNOLOGY devices (phones, laptops, monitors — guess models if possible)\n"
+        "4. VEHICLES (car make/model, license plates if visible)\n"
+        "5. CLOTHING items with estimated colors and styles\n"
+        "6. TEXT/words visible anywhere in the frames\n"
+        "7. LOCATION clues (indoor/outdoor, city/rural, any landmarks)\n\n"
+        "Format as a structured checklist. Say 'none detected' if a category is empty."
+    ),
+    "📝 Social Media Caption": (
+        "Create 3 social media caption options for this video content, based on {n} frames.\n\n"
+        "Each caption should include:\n"
+        "- A catchy headline/hook\n"
+        "- 2-3 relevant hashtags\n"
+        "- Target platform noted (Instagram / TikTok / YouTube / Twitter)\n\n"
+        "Caption 1 — Professional/LinkedIn style\n"
+        "Caption 2 — Casual/Instagram style with emoji\n"
+        "Caption 3 — Short/TikTok viral style\n\n"
+        "Make them feel authentic and platform-appropriate."
+    ),
+}
+
 # ── Video Utils ─────────────────────────────────────────────────────
 def get_video_info(path: str) -> dict:
     """Get video metadata using ffprobe."""
@@ -562,6 +622,22 @@ def build_ui():
                     placeholder="Write your own prompt here...",
                     lines=3,
                 )
+                
+                # ── Example Prompts ──
+                gr.Markdown("### 💡 Example Prompts")
+                example_prompts = gr.Dropdown(
+                    choices=[
+                        "✨ Select an example prompt...",
+                        "🎬 Movie Director Shot List",
+                        "📸 Photo/Art Style Analysis",
+                        "🎨 Dominant Color Palette",
+                        "🔍 Object & Brand Detection",
+                        "📝 Social Media Caption",
+                    ],
+                    value="✨ Select an example prompt...",
+                    label="Quick fill",
+                    interactive=True,
+                )
 
                 # ── Advanced Settings ──
                 with gr.Accordion("🔧 Advanced Settings", open=False):
@@ -692,6 +768,18 @@ def build_ui():
             fn=on_refresh_models,
             inputs=[api_url],
             outputs=[model_name, model_status],
+        )
+
+        # Example prompt selector → fill custom_prompt textbox
+        def on_example_select(selected):
+            if not selected or selected.startswith("✨"):
+                return ""  # Reset if "Select..." is chosen
+            return EXAMPLE_PROMPTS.get(selected, "")
+
+        example_prompts.change(
+            fn=on_example_select,
+            inputs=[example_prompts],
+            outputs=[custom_prompt],
         )
 
         process_btn.click(
