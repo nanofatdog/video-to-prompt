@@ -26,7 +26,7 @@ import requests
 from PIL import Image
 
 # ── Config ──────────────────────────────────────────────────────────
-API_URL = "http://192.168.3.177:8080/v1/chat/completions"
+API_URL = "http://localhost:8080/v1/chat/completions"
 MODEL_NAME = "llmfan46_Qwen3.6-35B-A3B-uncensored-heretic-Q6_K.gguf"
 DEFAULT_FRAME_COUNT = 16
 MAX_TOKENS = 1024

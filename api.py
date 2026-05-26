@@ -196,6 +196,7 @@ async def video_info(path: str = Query(..., description="Path to video file")):
 async def analyze_video(
     file: UploadFile = File(..., description="Video file to analyze"),
     api_url: str = Form(default=DEFAULT_API_URL, description="llama.cpp API endpoint"),
+    api_key: str = Form(default="", description="Optional API key (sent as Bearer token)"),
     model: str = Form(default=DEFAULT_MODEL, description="Model name"),
     mode: str = Form(default="describe", description="Prompt mode key"),
     custom_prompt: str = Form(default="", description="Custom prompt (overrides mode)"),
@@ -211,7 +212,8 @@ async def analyze_video(
     curl -X POST http://localhost:8000/api/analyze \\
       -F "file=@video.mp4" \\
       -F "mode=describe" \\
-      -F "api_url=http://192.168.3.177:8080/v1/chat/completions"
+      -F "api_url=http://192.168.3.177:8080/v1/chat/completions" \\
+      -F "api_key=sk-xxx"  # optional
     ```
     """
     t0 = time.time()
@@ -248,8 +250,13 @@ async def analyze_video(
             "top_p": 0.9,
         }
 
+        # Build headers
+        headers = {}
+        if api_key and api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
+
         # Call API
-        resp = requests.post(api_url, json=payload, timeout=300)
+        resp = requests.post(api_url, json=payload, headers=headers, timeout=300)
         resp.raise_for_status()
         data = resp.json()
 
@@ -296,6 +303,7 @@ async def analyze_video_json(body: dict):
       "path": "/path/to/video.mp4",
       "mode": "describe",
       "api_url": "http://192.168.3.177:8080/v1/chat/completions",
+      "api_key": "sk-xxx",
       "model": "model-name.gguf",
       "frame_count": 16
     }
@@ -305,6 +313,7 @@ async def analyze_video_json(body: dict):
 
     video_path = body.get("path", body.get("url", ""))
     api_url = body.get("api_url", DEFAULT_API_URL)
+    api_key = body.get("api_key", "")
     model = body.get("model", DEFAULT_MODEL)
     mode = body.get("mode", "describe")
     custom_prompt = body.get("custom_prompt", "")
@@ -344,7 +353,12 @@ async def analyze_video_json(body: dict):
             "top_p": 0.9,
         }
 
-        resp = requests.post(api_url, json=payload, timeout=300)
+        # Build headers
+        headers = {}
+        if api_key and api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
+
+        resp = requests.post(api_url, json=payload, headers=headers, timeout=300)
         resp.raise_for_status()
         data = resp.json()
 

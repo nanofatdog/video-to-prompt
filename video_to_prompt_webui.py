@@ -35,7 +35,7 @@ from PIL import Image
 
 # ── Constants ───────────────────────────────────────────────────────
 VERSION = "1.0.0"
-DEFAULT_API_URL = "http://192.168.3.177:8080/v1/chat/completions"
+DEFAULT_API_URL = "http://localhost:8080/v1/chat/completions"
 DEFAULT_MODEL = "llmfan46_Qwen3.6-35B-A3B-uncensored-heretic-Q6_K.gguf"
 DEFAULT_FRAME_COUNT = 16
 DEFAULT_MAX_SIZE = 1280
@@ -370,6 +370,7 @@ def clean_output(raw: str) -> str:
 def process_video(
     video_file,
     api_url: str,
+    api_key: str,
     model_name: str,
     mode: str,
     custom_prompt: str,
@@ -480,8 +481,13 @@ def process_video(
 
     api_start = time.time()
     try:
+        # Build headers with optional auth
+        headers = {}
+        if api_key and api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
+        
         resp = requests.post(api_url.rstrip("/") + "/v1/chat/completions" if not api_url.endswith("/v1/chat/completions") else api_url,
-                           json=payload, timeout=300)
+                           json=payload, headers=headers, timeout=300)
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.ConnectionError:
@@ -523,7 +529,7 @@ def process_video(
 
 
 # ── Model Fetch ─────────────────────────────────────────────────────
-def fetch_models(api_url: str) -> list[tuple[str, str]]:
+def fetch_models(api_url: str, api_key: str = "") -> list[tuple[str, str]]:
     """
     Fetch available models from llama.cpp API.
     Returns list of (display_name, model_id) tuples.
@@ -541,7 +547,10 @@ def fetch_models(api_url: str) -> list[tuple[str, str]]:
     models_url = f"{base_url}/v1/models"
     
     try:
-        resp = requests.get(models_url, timeout=10)
+        headers = {}
+        if api_key and api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
+        resp = requests.get(models_url, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.ConnectionError:
@@ -672,6 +681,14 @@ def build_ui():
                 )
                 model_status = gr.Markdown("")
 
+                with gr.Accordion("🔑 Authentication (optional)", open=False):
+                    api_key = gr.Textbox(
+                        label="API Key",
+                        value="",
+                        placeholder="Bearer token for authenticated endpoints (leave empty if none)",
+                        type="password",
+                    )
+
                 # ── Mode ──
                 gr.Markdown("### 🎯 Prompt Mode")
                 mode = gr.Dropdown(
@@ -782,12 +799,12 @@ def build_ui():
         def on_copy(text):
             return text  # gr.Textbox handles clipboard
 
-        def on_refresh_models(api_url_val):
+        def on_refresh_models(api_url_val, api_key_val):
             """Refresh model list from API."""
             if not api_url_val or not api_url_val.strip():
                 return gr.update(choices=[], value=""), "⚠️ Enter API URL first"
             
-            models = fetch_models(api_url_val)
+            models = fetch_models(api_url_val, api_key_val or "")
             choices = [display for display, _ in models]
             values = [model_id for _, model_id in models]
             
@@ -822,14 +839,14 @@ def build_ui():
         # Auto-load models on page load
         demo.load(
             fn=on_refresh_models,
-            inputs=[api_url],
+            inputs=[api_url, api_key],
             outputs=[model_name, model_status],
         )
 
         # Refresh button
         refresh_btn.click(
             fn=on_refresh_models,
-            inputs=[api_url],
+            inputs=[api_url, api_key],
             outputs=[model_name, model_status],
         )
 
@@ -848,7 +865,7 @@ def build_ui():
         process_btn.click(
             fn=process_video,
             inputs=[
-                video_input, api_url, model_name, mode, custom_prompt,
+                video_input, api_url, api_key, model_name, mode, custom_prompt,
                 frame_count, max_size, max_tokens, temperature, quality,
             ],
             outputs=[frame_preview, status_output, output_text, output_text, output_filename],
