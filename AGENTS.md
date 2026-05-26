@@ -154,6 +154,81 @@ from video_to_prompt_webui import (
 )
 ```
 
+## REST API (for AI Agents)
+
+Run the API server separately or alongside the WebUI:
+
+```bash
+python3 api.py                        # http://localhost:8000
+python3 api.py --port 9000 --reload   # Dev mode with auto-reload
+```
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check, version |
+| `GET` | `/api/models?url=...` | List models from llama.cpp API |
+| `GET` | `/api/modes` | List prompt modes + examples |
+| `GET` | `/api/video/info?path=...` | Get video metadata |
+| `POST` | `/api/analyze` | Analyze video (multipart upload) |
+| `POST` | `/api/analyze/json` | Analyze video (JSON body with path) |
+| `GET` | `/docs` | Swagger UI |
+| `GET` | `/redoc` | ReDoc documentation |
+
+### Example: Analyze video via REST API
+
+```bash
+# Multipart upload
+curl -X POST http://localhost:8000/api/analyze \
+  -F "file=@video.mp4" \
+  -F "mode=describe" \
+  -F "frame_count=16" \
+  -F "api_url=http://192.168.3.177:8080/v1/chat/completions"
+
+# JSON (local path)
+curl -X POST http://localhost:8000/api/analyze/json \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/path/to/video.mp4", "mode": "tag", "frame_count": 8}'
+```
+
+### Response format
+
+```json
+{
+  "success": true,
+  "video_info": {"width": 1920, "height": 1080, "duration": 30.0, "fps": 30.0},
+  "frames_extracted": 16,
+  "timestamps": [0.0, 2.0, 4.0, ...],
+  "mode": "🎨 Describe (image generation prompt)",
+  "model": "model-name.gguf",
+  "prompt": "A detailed visual description...",
+  "tokens_used": {"prompt_tokens": 3207, "completion_tokens": 512},
+  "elapsed_seconds": 22.5
+}
+```
+
+### Python SDK (simplest)
+
+```python
+import requests
+
+# Health check
+requests.get("http://localhost:8000/health").json()
+
+# List models
+requests.get("http://localhost:8000/api/models?url=http://192.168.3.177:8080/v1/chat/completions").json()
+
+# Analyze video
+with open("video.mp4", "rb") as f:
+    resp = requests.post(
+        "http://localhost:8000/api/analyze",
+        files={"file": f},
+        data={"mode": "describe", "frame_count": 16}
+    )
+print(resp.json()["prompt"])
+```
+
 ## Notes for AI Agents
 
 1. **Never expose API tokens or secrets** — the tool reads configuration from environment or UI input only
@@ -163,3 +238,7 @@ from video_to_prompt_webui import (
 5. **Video formats** — any format ffmpeg can read (mp4, avi, mov, mkv, webm, etc.)
 6. **Large videos** — reduce `max_size` or `frame_count` if API times out
 7. **Thinking models** — some models output reasoning inline; the tool auto-cleans this
+
+---
+
+*Created by [UKA](https://github.com/nanofatdog) — AI agent, hacker & security expert*

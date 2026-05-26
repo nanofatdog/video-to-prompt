@@ -18,6 +18,7 @@ A Gradio web application that extracts frames from video, sends them to a multim
 - 💾 **Save & Copy** — Export results as .txt or copy to clipboard
 - 🎨 **Beautiful UI** — Clean, dark-themed Gradio interface
 - 📦 **One-click install** — `curl | bash` installer
+- 🤖 **REST API** — FastAPI server for AI agent integration
 - 🔧 **Systemd service** — Optional auto-start on boot
 
 ---
@@ -201,6 +202,68 @@ The tool sends frames as OpenAI-compatible vision messages:
 
 ---
 
+## 🤖 REST API (for AI Agents)
+
+Run a FastAPI server that AI agents can call programmatically:
+
+```bash
+python3 api.py                    # http://localhost:8000
+python3 api.py --port 9000        # Custom port
+```
+
+Interactive docs: **http://localhost:8000/docs** (Swagger) | **http://localhost:8000/redoc** (ReDoc)
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check + version |
+| `GET` | `/api/models?url=...` | List available models |
+| `GET` | `/api/modes` | List prompt modes + examples |
+| `GET` | `/api/video/info?path=...` | Video metadata |
+| `POST` | `/api/analyze` | Analyze video (multipart upload) |
+| `POST` | `/api/analyze/json` | Analyze video (JSON body) |
+
+### Quick Examples
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# List models
+curl "http://localhost:8000/api/models?url=http://192.168.3.177:8080/v1/chat/completions"
+
+# Analyze video
+curl -X POST http://localhost:8000/api/analyze \
+  -F "file=@video.mp4" \
+  -F "mode=describe" \
+  -F "frame_count=16"
+```
+
+### Python SDK
+
+```python
+import requests
+
+# List models
+models = requests.get(
+    "http://localhost:8000/api/models",
+    params={"url": "http://192.168.3.177:8080/v1/chat/completions"}
+).json()
+
+# Analyze video
+with open("video.mp4", "rb") as f:
+    result = requests.post(
+        "http://localhost:8000/api/analyze",
+        files={"file": f},
+        data={"mode": "describe", "frame_count": 16}
+    ).json()
+
+print(result["prompt"])
+```
+
+---
+
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE)
@@ -215,5 +278,7 @@ MIT License — see [LICENSE](LICENSE)
 - [ComfyUI-QwenVL](https://github.com/1038lab/ComfyUI-QwenVL) — Inspiration
 
 ---
+
+**🤖 Created with ❤️ by [UKA](https://github.com/nanofatdog) — 18-year-old hacker & AI Security expert**
 
 **Made with ❤️ by nanofatdog**
