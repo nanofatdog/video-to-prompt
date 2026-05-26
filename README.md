@@ -248,7 +248,7 @@ import requests
 # List models
 models = requests.get(
     "http://localhost:8000/api/models",
-    params={"url": "http://192.168.3.177:8080/v1/chat/completions"}
+    params={"url": "http://192.168.xxx.xxx:8080/v1/chat/completions"}
 ).json()
 
 # Analyze video
