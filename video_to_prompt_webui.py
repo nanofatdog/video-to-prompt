@@ -647,32 +647,32 @@ def fetch_models(api_url: str, api_key: str = "") -> list[tuple[str, str]]:
     return result if result else [(f"⚠️ No models found", "")]
 
 
+# ── Gradio Theme (Gradio 6.0: pass to launch(), not Blocks) ──────
+_GRADIO_THEME = gr.themes.Soft(
+    primary_hue="orange",
+    secondary_hue="gray",
+    neutral_hue="slate",
+    font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
+)
+
+_GRADIO_CSS = """
+.container { max-width: 1200px; margin: 0 auto; }
+.output-text textarea { font-size: 1rem !important; line-height: 1.6 !important; }
+.stats-box { font-size: 0.95rem; }
+.title-gradient { 
+    background: linear-gradient(135deg, #ff6b35, #f7c948); 
+    -webkit-background-clip: text; 
+    -webkit-text-fill-color: transparent; 
+    font-weight: 800; 
+}
+.preset-active { border: 2px solid #ff6b35 !important; }
+footer { display: none !important; }
+"""
+
+
 # ── UI ──────────────────────────────────────────────────────────────
 def build_ui():
-    theme = gr.themes.Soft(
-        primary_hue="orange",
-        secondary_hue="gray",
-        neutral_hue="slate",
-        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
-    )
-
-    css = """
-    .container { max-width: 1200px; margin: 0 auto; }
-    .output-text textarea { font-size: 1rem !important; line-height: 1.6 !important; }
-    .stats-box { font-size: 0.95rem; }
-    .title-gradient { 
-        background: linear-gradient(135deg, #ff6b35, #f7c948); 
-        -webkit-background-clip: text; 
-        -webkit-text-fill-color: transparent; 
-        font-weight: 800; 
-    }
-    .preset-active { border: 2px solid #ff6b35 !important; }
-    footer { display: none !important; }
-    """
-
     with gr.Blocks(
-        theme=theme,
-        css=css,
         title="Video-to-Prompt | AI Video Analyzer",
         analytics_enabled=False,
     ) as demo:
@@ -842,7 +842,7 @@ def build_ui():
                 with gr.Row():
                     download_frames_btn = gr.Button("📦 Download Frames", scale=1, variant="secondary")
                     download_output = gr.File(label="", visible=False)
-                    download_status = gr.Markdown("", scale=2)
+                    download_status = gr.Markdown("")
                 
                 save_status = gr.Markdown("")
 
@@ -1122,6 +1122,8 @@ def main():
         server_port=args.port,
         share=args.share,
         show_error=True,
+        theme=_GRADIO_THEME,
+        css=_GRADIO_CSS,
     )
 
 
