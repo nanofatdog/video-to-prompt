@@ -40,6 +40,7 @@ DEFAULT_MODEL = "llmfan46_Qwen3.6-35B-A3B-uncensored-heretic-Q6_K.gguf"
 DEFAULT_FRAME_COUNT = 16
 DEFAULT_MAX_SIZE = 1280
 DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_TOKENS_LIMIT = 8192  # Max slider value for llama.cpp
 
 PROMPT_MODES = {
     "🎨 Describe (image generation prompt)": {
@@ -192,8 +193,8 @@ def get_video_info(path: str) -> dict:
         return {}
 
 
-def extract_frames(video_path: str, frame_count: int = 16, max_size: int = 1280) -> list[Image.Image]:
-    """Extract uniformly sampled frames using ffmpeg."""
+def extract_frames(video_path: str, frame_count: int = 16, max_size: int = 1280) -> tuple[list[Image.Image], list[float]]:
+    """Extract uniformly sampled frames using ffmpeg. Returns (frames, timestamps)."""
     video_info = get_video_info(video_path)
     duration = video_info.get("duration", 0)
 
@@ -213,7 +214,15 @@ def extract_frames(video_path: str, frame_count: int = 16, max_size: int = 1280)
 
     result = subprocess.run(cmd, capture_output=True, check=True, timeout=60)
     frames = _split_png_stream(result.stdout)
-    return frames
+    
+    # Calculate timestamps for each frame
+    if duration > 0 and frames:
+        # fps filter distributes frames evenly, but we calculate based on uniform sampling
+        timestamps = [duration * i / len(frames) for i in range(len(frames))]
+    else:
+        timestamps = [float(i) for i in range(len(frames))]
+    
+    return frames, timestamps
 
 
 def _split_png_stream(data: bytes) -> list[Image.Image]:
@@ -248,24 +257,66 @@ def frame_to_base64(img: Image.Image, quality: int = 80) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def create_frame_strip(frames: list[Image.Image], cols: int = 8, thumb_size: int = 200) -> Image.Image:
-    """Create a contact sheet / frame strip from extracted frames."""
+def create_frame_strip(
+    frames: list[Image.Image],
+    timestamps: list[float] | None = None,
+    cols: int = 8,
+    thumb_size: int = 200,
+) -> Image.Image:
+    """Create a contact sheet / frame strip from extracted frames with timestamps."""
     if not frames:
         return Image.new("RGB", (thumb_size, thumb_size), color=(30, 30, 30))
 
     rows = (len(frames) + cols - 1) // cols
+    label_height = 24  # space for timestamp label
+    
     thumbs = []
     for f in frames:
         thumb = f.copy()
         thumb.thumbnail((thumb_size, thumb_size), Image.LANCZOS)
         thumbs.append(thumb)
 
-    strip = Image.new("RGB", (cols * thumb_size, rows * thumb_size), color=(20, 20, 20))
+    total_h = rows * (thumb_size + label_height)
+    strip = Image.new("RGB", (cols * thumb_size, total_h), color=(20, 20, 20))
+    
+    try:
+        from PIL import ImageDraw, ImageFont
+        # Try to get a small font
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+    except ImportError:
+        font = None
+    
     for i, thumb in enumerate(thumbs):
         r, c = i // cols, i % cols
+        # Top area: thumb
         x = c * thumb_size + (thumb_size - thumb.width) // 2
-        y = r * thumb_size + (thumb_size - thumb.height) // 2
+        y = r * (thumb_size + label_height) + (thumb_size - thumb.height) // 2
         strip.paste(thumb, (x, y))
+        
+        # Bottom area: timestamp label
+        if timestamps and i < len(timestamps) and font:
+            ts = timestamps[i]
+            label_x = c * thumb_size + 4
+            label_y = r * (thumb_size + label_height) + thumb_size + 3
+            
+            # Format timestamp: mm:ss or h:mm:ss
+            if ts >= 3600:
+                label = f"{int(ts//3600)}:{int((ts%3600)//60):02d}:{ts%60:04.1f}"
+            else:
+                label = f"{int(ts//60):02d}:{ts%60:04.1f}"
+            
+            draw = ImageDraw.Draw(strip)
+            # Black background bar
+            draw.rectangle(
+                [c * thumb_size, label_y - 3, (c + 1) * thumb_size, label_y + label_height],
+                fill=(0, 0, 0),
+            )
+            # Orange text
+            draw.text((label_x, label_y), label, fill=(255, 200, 50), font=font)
+    
     return strip
 
 
@@ -357,7 +408,7 @@ def process_video(
     yield None, info_text + "\n\n🔄 Extracting frames...", "", "", ""
 
     try:
-        frames = extract_frames(video_path, frame_count, max_size)
+        frames, timestamps = extract_frames(video_path, frame_count, max_size)
     except subprocess.CalledProcessError as e:
         yield None, f"❌ ffmpeg error: {e.stderr.decode()[:500] if e.stderr else str(e)}", "", "", ""
         return
@@ -371,8 +422,19 @@ def process_video(
 
     # ── Step 3: Preview ──
     progress(0.30, desc="🖼️ Generating preview...")
-    strip = create_frame_strip(frames)
-    frame_info = f"📸 Extracted **{len(frames)}** frames (requested {frame_count})"
+    strip = create_frame_strip(frames, timestamps)
+    
+    # Build frame info with timestamps
+    if timestamps and len(timestamps) > 1:
+        ts_lines = ", ".join(f"{ts:.1f}s" for ts in timestamps[:5])
+        if len(timestamps) > 5:
+            ts_lines += f" ... → {timestamps[-1]:.1f}s"
+        frame_info = (
+            f"📸 Extracted **{len(frames)}** frames (requested {frame_count})\n"
+            f"⏱ **Timestamps:** {ts_lines}"
+        )
+    else:
+        frame_info = f"📸 Extracted **{len(frames)}** frames (requested {frame_count})"
     yield strip, info_text + "\n\n" + frame_info, "", "", ""
 
     # ── Step 4: Build Prompt ──
@@ -652,8 +714,9 @@ def build_ui():
                         info="Resize frames before sending",
                     )
                     max_tokens = gr.Slider(
-                        minimum=128, maximum=4096, value=DEFAULT_MAX_TOKENS, step=128,
+                        minimum=128, maximum=DEFAULT_MAX_TOKENS_LIMIT, value=DEFAULT_MAX_TOKENS, step=128,
                         label="Max output tokens",
+                        info=f"Up to {DEFAULT_MAX_TOKENS_LIMIT} tokens",
                     )
                     temperature = gr.Slider(
                         minimum=0.1, maximum=1.5, value=0.6, step=0.05,
